@@ -1,0 +1,716 @@
+---
+title: "RNAseq Analysis - Final Project Report"
+author: "Alessandro Giulivo"
+date: "12/7/2021"
+output:
+  word_document:
+    toc: yes
+    toc_depth: '3'
+  pdf_document:
+    toc: yes
+    toc_depth: '3'
+  html_document:
+    code_folding: show
+    df_print: default
+    fig_caption: yes
+    highlight: kate
+    theme: readable
+    toc: yes
+    toc_float:
+      collapsed: yes
+      smooth_scroll: yes
+subtitle: Bioinformatics I
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+
+## Intro
+
+This project of RNAseq Analysis is based on RNA sequencing data coming from the [Regulation of transcription elongation in response to osmostress](https://www.ncbi.nlm.nih.gov/pmc/articles/PMC5720810/) paper published by PLOS GENETICS on November 17^th^ 2017.
+
+The sequencing was performed on 12 samples of **Saccharomyces Cerevisiae yeast**, in particular there were 3 replicates for each of four different conditions:
+
+*  *Wild-type strains in normal conditions*;
+*  *Wild-type strains in osmostress conditions;*
+*  *Mutant strains in normal conditions;*
+*  *Mutant strains in osmostress conditions.*
+
+
+The programs used for this bioinformatics analysis are [RStudio](rstudio.com) (R and RMarkdown) and a Xubuntu machine installed within [Oracle VirtualBox](virtualbox.org).  
+A **conda "RNAseq" environment** was created and activated in the latter and these softwares were installed:
+
+-   FastQC;
+-   MultiQC;
+-   Trim Galore;
+-   Salmon.
+
+
+
+## 1 - Downloading the data
+
+### SRA Accession List
+
+The first file to be downloaded is the list of the **Run IDs** of our 12 samples. It is found in the **Accession List** page inside the [Gene Expression Omnibus (GEO) database](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE98352), where all the data from the study have been deposited.
+
+This is our `SRR_Acc_List.txt` file:
+
+```{r SRR_Acc_List, class.source = 'fold-hide'}
+cat(readLines('SRR_Acc_List.txt'), sep = '\n')
+```
+### Data from SRA
+
+After having downloaded the Accession List, we can use it in our Linux machine in order to download the files of our 12 samples from SRA.  
+First we download each sample using this `sra-toolkit` command:
+
+```{bash sra prefetch, eval=FALSE}
+prefetch SRRxxx -O .
+```
+
+Then we need to convert the downloaded `sra` files to `fastq`, using:
+
+```{bash fastq-dump, eval=FALSE}
+fastq-dump --gzip SRRxxx.sra
+```
+
+If we want to download and convert all the 12 files only in one step, the commands we need to use are:
+
+```{bash xargs prefetch, eval=FALSE}
+cat SRR_Acc_List.txt | xargs prefetch -O . #for download
+```
+and
+
+```{bash fastqdump, eval=FALSE}
+fastq-dump --gzip *.sra #for conversion
+```
+
+### Already processed data
+
+We also need to download the raw counts of *already processed data*, which will be useful in the 7^th^ Step of our analysis. This `"GSE98352_DESeq2_raw_counts.tsv"` file can be downloaded from the same [GEO database page](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE98352) we used for the download of the SRA Accession List
+
+
+
+## 2 - FastQC
+
+Now that we have the data we can start our RNA-seq analysis with a **quality control** step of our reads. We can do that by using **FastQC**, a tool which will analyse the quality of our files and output a report containing graphs and statistics for each of them.
+
+So first we need to create a dedicated folder for the output reports using the command `mkdir fastqc_reports`, and then we can run FastQC on all our files:
+
+```{bash fastqc, eval=FALSE}
+fastqc -o fastqc_reports *.fastq.gz
+```
+
+### FastQC Report
+This is what the ***FastQC reports*** will look like:
+
+![FastQC report for SRR5486478.fastq](C:\Users\aless\Downloads\fastqc_image.png)
+
+
+
+## 3 - MultiQC
+
+MultiQC is a useful tool capable of collecting all the FastQC output files of *multiple analyzed samples*, and give a summarized result in the form of a **MultiQC Report**
+
+In order to run MultiQC, we simply run this command:
+
+```{bash eval=FALSE}
+multiqc .
+```
+
+### MultiQC Report
+
+And this is what the **MultiQC report** will look like:
+
+![MultiQC Report](C:\Users\aless\Downloads\multiqc_capture.png)
+
+### TrimGalore?
+
+Taking a look at the FastQC reports or at the MultiQC report we can have an overview of the quality of our files and possibly decide to perform a **quality and adapter trimming step with TrimGalore**.
+
+We usually use *TrimGalore* to trim our sequences in the case of *low-quality ends* (when the **phred score** of the bases is less than 25), in the case of *overlap with adapters* (with a stringency  of 5) or directly discard sequences which (after trimming) have a length shorter than 35.  
+However, our reports clearly show that all our reads always have a quality which is greater than 30, they basically don't contain any adapter sequences and they always have a length of 50 BP. For this reason, the *TrimGalore* step doesn't appear to be necessary.
+
+
+
+## 4 - Salmon
+
+The next move in our analysis is **sample quantification** using **Salmon**. This software will give us *expression levels* of our samples, which we will then use in the *differential expression analysis*. 
+
+### Salmon Index
+
+First, we need to create an `index` for the *S. Cerevisiae transcriptome*, in order for Salmon to run faster. We can do that by downloading the `Saccharomyces_cerevisiae.R64-1-1.cdna.all.fa.gz` file from [Ensembl ftp](http://ftp.ensembl.org/pub/release-104/fasta/saccharomyces_cerevisiae/cdna/Saccharomyces_cerevisiae.R64-1-1.cdna.all.fa.gz) and then running this command in the shell:
+
+```{bash salmon index, eval=FALSE}
+# create salmon index
+salmon index -t Saccharomyces_cerevisiae.R64-1-1.cdna.all.fa.gz -i yeast_index
+```
+
+### Quantification with Salmon
+
+Now that we have our `transcriptome index`, we can run **Salmon** and store the output results in a single directory.  
+In order to do that, we run the following script:
+
+```{bash salmon align and quantification, eval=FALSE}
+echo "Run salmon..."
+
+mkdir -p salmon_results
+
+for filename in *.fastq.gz
+do
+   base=$(basename $filename .fastq.gz)
+   
+   echo "Align sample ${base}..."
+   
+   salmon quant -i yeast_index \
+		--libType A \
+        	-r ${base}.fastq.gz \
+        	-o salmon_results/${base}
+done
+```
+
+
+
+## 5 - DESeq2 Analysis
+
+Now that we have our **quantification files** we can switch our analysis to `RStudio` and perform a **Differential Expression analysis** using [DESeq2](https://bioconductor.org/packages/release/bioc/html/DESeq2.html).
+
+### Packages Load
+
+First of all, let's download all the packages we will need
+
+```{r load packages, message=FALSE}
+library(DESeq2)
+library(tximport)
+library(GenomicFeatures)
+library(readr)
+library(ggplot2)
+```
+
+### colData
+
+Now we can start creating the objects which will be necessary for our DESeq Analysis.  
+The **sampledata data.frame** can be created by using the Run IDs of our `SRR_Acc_List.txt` file as `rownames`. Then, we will ad a `group` column according to the sample characteristics.
+
+```{r colData}
+# create a sapmledata data.frame ----
+sampledata <- 
+  read.csv("SRR_Acc_List.txt", header = FALSE)
+colnames(sampledata) <- "runids"
+
+sampledata$group <- rep(c("WT_no_stress", "WT_stress", "Mut_no_stress", "Mut_stress"), each = 3)
+
+rownames(sampledata) <- sampledata$runids
+sampledata[1] <- NULL
+sampledata
+```
+
+### Import data with `tximport`
+
+We will then import our *transcript-level abundances* from the `quant.sf` files using the `tximport` function in a few steps:
+
+*  Set the `quant.sf` file paths
+
+```{r quant files}
+files <- file.path("data/salmon_results/", row.names(sampledata), "quant.sf")
+names(files) <- row.names(colData)
+```
+
+*  Create a `tx2gene` object after having downloaded the right `GTF` file from [Ensembl](https://uswest.ensembl.org/Saccharomyces_cerevisiae/Info/Index) website
+
+```{r tx2gene, results=FALSE, message=FALSE, warning=FALSE}
+txdb <- GenomicFeatures::makeTxDbFromGFF("Saccharomyces_cerevisiae.R64-1-1.104.gtf")
+k <- keys(txdb, keytype = "GENEID")
+tx2gene <- select(txdb, keys = k, keytype = "GENEID", columns = "TXNAME")
+```
+
+*  Reorder the columns of `tx2gene`
+
+```{r ordered tx2gene, message=FALSE}
+tx2gene <- tx2gene[, c("TXNAME", "GENEID")]
+head(tx2gene)
+```
+
+*  Import **Salmon quantification data** with `tximport` creating a `txi.salmon` object
+
+```{r txi.salmon,message=FALSE}
+txi.salmon <- tximport(files = files, type = "salmon", tx2gene = tx2gene, ignoreTxVersion = TRUE, dropInfReps = TRUE)
+head(txi.salmon$counts)
+```
+
+* Check that the sample names match between the `rownames` of `sampledata` and the `colnames` of `txi.salmon$counts`
+
+```{r rows-columns}
+identical(x = rownames(colData), y = colnames(txi.salmon$counts))
+```
+
+
+### DESeq2 Pipeline
+
+Now that we have all the required objects, let's get to the **DESeq2 pipeline**:  
+
+* We store the input values in the `dds` object by using the `DDSeqDataSetFromTximport` function
+
+```{r dds, results=FALSE, message=FALSE, warning=FALSE}
+dds <- DESeqDataSetFromTximport(txi = txi.salmon, colData = sampledata, design = ~group)
+```
+
+*  We filter non-expressed genes, re-order the levels of the factor with the `relevel` function, and perform the analysis running the `DESeq` function
+
+```{r filter dds, results=FALSE, message=FALSE, warning=FALSE}
+keep <- rowSums(counts(dds)) > 1
+dds <- dds[keep, ]
+
+dds$group <- relevel(x = dds$group, ref = "WT_no_stress")
+dds <- DESeq(dds)
+```
+
+*  We finally store our results in a `res` object and take a look at them
+
+```{r res}
+res <- results(dds)
+summary(res)
+res
+```
+
+
+### PCA Plot
+
+Now let's plot the **PCA** of the `rld` normalized values
+
+```{r pca}
+rld <- rlog(dds)
+DESeq2::plotPCA(rld, ntop = 500, intgroup = 'group') + 
+  theme_bw() + labs(title="PCA Plot")
+```
+
+
+### Group Comparisons
+
+Now we are going to perform **comparisons** between the different groups of samples. These are going to be:
+
+*  `r1`: `WT_stress vs WT_no_stress`
+*  `r2`: `Mut_stress vs Mut_no_stress`
+*  `r3`: `Mut_stress vs WT_stress`
+*  `r4`: `Mut_no_stress vs WT_no_stress`
+
+We are also going to produce an **MA Plot** for each of the four comparisons.
+
+#### `r1`: `WT_stress vs WT_no_stress`
+
+```{r r1}
+r1 <- results(dds, contrast = c("group", "WT_stress", "WT_no_stress"))
+DESeq2::plotMA(r1, alpha = 0.05, main = "MA Plot for r1", colSig="firebrick2", colLine="firebrick2")
+```
+
+
+#### `r2`: `Mut_stress vs Mut_no_stress`
+
+```{r r2}
+r2 <- results(dds, contrast = c("group", "Mut_stress","Mut_no_stress"))
+DESeq2::plotMA(r2, alpha = 0.05, main = "MA Plot for r2", colSig="deepskyblue3", colLine="deepskyblue3")
+```
+
+
+#### `r3`: `Mut_stress vs WT_stress`
+
+```{r r3}
+r3 <- results(dds, contrast = c("group", "Mut_stress", "WT_stress"))
+DESeq2::plotMA(r3, alpha = 0.05, main = "MA Plot for r3", colSig="darkmagenta", colLine="darkmagenta")
+```
+
+
+#### `r4`: `Mut_no_stress vs WT_no_stress`
+
+```{r r4}
+r4 <- results(dds, contrast = c("group", "Mut_no_stress","WT_no_stress"))
+DESeq2::plotMA(r4, alpha = 0.05, main = "MA Plot for r4", colSig="chartreuse2", colLine="chartreuse2")
+```
+
+## 6 - GO Enrichment Analysis
+
+Now we will perform a **Gene Ontology (GO) Enrichment Analysis** on each of the four comparisons we generated in *Step 6*.
+
+### Packages Load
+
+In order to perform the analysis, it's going to be necessary to load a few more packages:
+
+```{r load more packages, results=FALSE, message=FALSE, warning=FALSE}
+library("AnnotationDbi")
+library("org.Sc.sgd.db")
+library("clusterProfiler")
+```
+
+### Analysis on r1
+
+Let's start with the analysis on the first comparison `r1`.  
+First of all we need to **remove genes with NA values**, **select genes which have a p-adjusted value smaller than 0.05**, and **select UP regulated genes (log2FoldChange > 1)**
+
+```{r select r1}
+upregulated_r1 <- r1[!is.na(r1$padj),]
+upregulated_r1 <- upregulated_r1[upregulated_r1$padj < 0.05,]
+upregulated_r1 <- upregulated_r1[upregulated_r1$log2FoldChange > 1,]
+```
+
+Then we find the Gene Names using this code:
+
+```{r mapids r1, results=FALSE, message=FALSE, warning=FALSE}
+upregulated_r1$symbol <- mapIds(org.Sc.sgd.db,
+                    keys=rownames(upregulated_r1),
+                    column="GENENAME",
+                    keytype="ENSEMBL",
+                    multiVals="first")
+```
+
+Now we use the `enrichGO` function in order to perform the analysis on our `selected_r1` object and choosing the `Biological Process (BP)` ontology
+
+```{r go r1}
+GO_BP_1 <- enrichGO(upregulated_r1$symbol, OrgDb = "org.Sc.sgd.db", keyType = "GENENAME", ont = "BP")
+```
+
+We finally plot the results of our *GO Enrichment analysis* using the simple `dotplot` function
+
+```{r goplot r1, fig.width = 8}
+dotplot(GO_BP_1, title = "Biological Process for r1")
+```
+
+We are now going to repeat the same steps over *r2*, *r3* and *r4*.
+
+### Analysis on r2
+
+Select **UP regulated** genes (`log2FoldChange > 1` and `padj < 0.05`)
+
+```{r select r2}
+upregulated_r2 <- r2[!is.na(r2$padj),]
+upregulated_r2 <- upregulated_r2[upregulated_r2$padj < 0.05,]
+upregulated_r2 <- upregulated_r2[upregulated_r2$log2FoldChange > 1,]
+```
+
+Find the Gene Names
+
+```{r mapids r2, results=FALSE, message=FALSE, warning=FALSE}
+upregulated_r2$symbol <- mapIds(org.Sc.sgd.db,
+                    keys=rownames(upregulated_r2),
+                    column="GENENAME",
+                    keytype="ENSEMBL",
+                    multiVals="first")
+```
+
+Use the `enrichGO` function with `Biological Process (BP)` ontology and plot the results with `dotplot`
+
+```{r goplot r2, fig.width = 8}
+GO_BP_2 <- enrichGO(upregulated_r2$symbol, OrgDb = "org.Sc.sgd.db", keyType = "GENENAME", ont = "BP")
+dotplot(GO_BP_2, title = "Biological Process for r2")
+```
+
+
+### Analysis on r3
+
+Select **UP regulated** genes (`log2FoldChange > 1` and `padj < 0.05`)
+
+```{r select r3}
+upregulated_r3 <- r3[!is.na(r3$padj),]
+upregulated_r3 <- upregulated_r3[upregulated_r3$padj < 0.05,]
+upregulated_r3 <- upregulated_r3[upregulated_r3$log2FoldChange > 1,]
+```
+
+Find the Gene Names
+
+```{r mapids r3, results=FALSE, message=FALSE, warning=FALSE}
+upregulated_r3$symbol <- mapIds(org.Sc.sgd.db,
+                    keys=rownames(upregulated_r3),
+                    column="GENENAME",
+                    keytype="ENSEMBL",
+                    multiVals="first")
+```
+
+Use the `enrichGO` function with `Biological Process (BP)` ontology and plot the results with `dotplot`
+
+```{r goplot r3, fig.width = 10}
+GO_BP_3 <- enrichGO(upregulated_r3$symbol, OrgDb = "org.Sc.sgd.db", keyType = "GENENAME", ont = "BP")
+dotplot(GO_BP_3, title = "Biological Process for r3")
+```
+
+### Analysis on r4
+
+Select **UP regulated** genes (`log2FoldChange > 1` and `padj < 0.05`)
+
+```{r select r4}
+upregulated_r4 <- r4[!is.na(r4$padj),]
+upregulated_r4 <- upregulated_r4[upregulated_r4$padj < 0.05,]
+upregulated_r4 <- upregulated_r4[upregulated_r4$log2FoldChange > 1,]
+```
+
+Find the Gene Names
+
+```{r mapids r4, results=FALSE, message=FALSE, warning=FALSE}
+upregulated_r4$symbol <- mapIds(org.Sc.sgd.db,
+                    keys=rownames(upregulated_r4),
+                    column="GENENAME",
+                    keytype="ENSEMBL",
+                    multiVals="first")
+```
+
+Use the `enrichGO` function with `Biological Process (BP)` ontology and plot the results with `dotplot`
+
+```{r goplot r4, fig.width = 10}
+GO_BP_4 <- enrichGO(upregulated_r4$symbol, OrgDb = "org.Sc.sgd.db", keyType = "GENENAME", ont = "BP")
+dotplot(GO_BP_3, title = "Biological Process for r4")
+```
+
+## 7 - DESeq2 on Authors' Data
+
+Our analysis on the raw data of the study is finished. Now it's time to repeat the same **Differential Expression Analysis with DESeq2** on data which had been previously processed by the *paper authors*. Remember this processed data have been already downloaded in the `GSE98352_DESeq2_raw_counts.tsv`file in `Step 1`.
+
+### Import the Data
+
+In order to import the data from the `GSE98352_DESeq2_raw_counts.tsv` file, we use the `read.table` function
+
+```{r read processed data}
+countData <- read.table('GSE98352_DESeq2_raw_counts.tsv')
+head(countData)
+```
+
+It's now necessary to change the `colnames` of our new `countData` object, in order for them to match to the `rownames` of `sampledata
+
+```{r cols-rows}
+colnames(countData) <- rownames(sampledata)
+head(countData)
+```
+
+### DESeq2 Pipeline
+
+Now we can run the same **DESeq2 Pipeline** we used earlier in `Step 5` and take a look at the results
+
+```{r deseq2 pipeline, message=FALSE, warning=FALSE}
+# DESeq2 pipeline ----
+new_dds <- DESeqDataSetFromMatrix(countData = countData, colData = sampledata, design = ~group)
+
+# filtering not expressed genes ----
+new_keep <- rowSums(counts(new_dds)) > 1
+new_dds <- new_dds[new_keep, ]
+
+new_dds$group <- relevel(x = new_dds$group, ref = "WT_no_stress")
+new_dds <- DESeq(new_dds)
+
+# save the results of DE analysis ----
+new_res <- results(new_dds)
+
+# look at the results ----
+summary(new_res)
+new_res
+
+```
+
+### PCA Plot
+
+We then generate a `PCA Plot`
+
+```{r new pca}
+new_rld <- rlog(new_dds)
+DESeq2::plotPCA(new_rld, ntop = 500, intgroup = 'group') + 
+  theme_bw() + labs(title="PCA Plot for Already Processed Data")
+```
+
+### Group Comparisons
+
+The last step of this analysis, as we did in step 5, is gonna be to analyse the comparisons between the 4 different groups of samples:
+
+*  `r1.2`: `WT_stress vs WT_no_stress`
+*  `r2.2`: `Mut_stress vs Mut_no_stress`
+*  `r3.2`: `Mut_stress vs WT_stress`
+*  `r4.2`: `Mut_no_stress vs WT_no_stress`
+
+We are also going to produce an **MA Plot** for each of the four comparisons.
+
+#### `r1.2`: `WT_stress vs WT_no_stress`
+
+```{r r1.2}
+r1.2 <- results(new_dds, contrast = c("group", "WT_stress", "WT_no_stress"))
+DESeq2::plotMA(r1.2, alpha = 0.05, main = "MA Plot for r1.2", colSig="firebrick2", colLine="firebrick2")
+```
+
+
+#### `r2.2`: `Mut_stress vs Mut_no_stress`
+
+```{r r2.2}
+r2.2 <- results(new_dds, contrast = c("group", "Mut_stress","Mut_no_stress"))
+DESeq2::plotMA(r2.2, alpha = 0.05, main = "MA Plot for r2.2", colSig="deepskyblue3", colLine="deepskyblue3")
+```
+
+
+#### `r3.2`: `Mut_stress vs WT_stress`
+
+```{r r3.2}
+r3.2 <- results(new_dds, contrast = c("group", "Mut_stress", "WT_stress"))
+DESeq2::plotMA(r3.2, alpha = 0.05, main = "MA Plot for r3.2", colSig="darkmagenta", colLine="darkmagenta")
+```
+
+
+#### `r4.2`: `Mut_no_stress vs WT_no_stress`
+
+```{r r4.2}
+r4.2 <- results(new_dds, contrast = c("group", "Mut_no_stress","WT_no_stress"))
+DESeq2::plotMA(r4.2, alpha = 0.05, main = "MA Plot for r4.2", colSig="chartreuse2", colLine="chartreuse2")
+```
+
+## 8 - Final Step
+
+We finally got to the conclusions of our analysis
+
+### Save the DE Genes
+
+We can save **the differentially expressed genes** with `padj < 0.05` of the 4 comparisons created in `Step 5` in a `results*` file using the `write.table`.
+
+#### Results for r1
+
+First we need to select the **differentially expressed genes** from `r1`
+
+```{r DEr1, table.width = 20}
+DEr1 <- r1[!is.na(r1$padj),]
+DEr1 <- DEr1[DEr1$padj < 0.05,]
+DEr1 <- DEr1[abs(DEr1$log2FoldChange) > 1,]
+head(DEr1)
+```
+
+Now we save the `DEr1` object in a `results_r1` file
+
+```{r save DEr1}
+write.table(x = DEr1, file = "results_r1.txt", sep = "\t", col.names = NA)
+```
+
+We are now going to repeat the same process for the other 3 results.
+
+#### Results for r2
+
+Select the **differentially expressed genes** from `r2`
+
+```{r DEr2}
+DEr2 <- r2[!is.na(r2$padj),]
+DEr2 <- DEr2[DEr2$padj < 0.05,]
+DEr2 <- DEr2[abs(DEr2$log2FoldChange) > 1,]
+head(DEr2)
+```
+
+Save the `DEr2` object in a `results_r2` file
+
+```{r save DEr2}
+write.table(x = DEr2, file = "results_r2.txt", sep = "\t", col.names = NA)
+```
+
+
+#### Results for r3
+
+Select the **differentially expressed genes** from `r3`
+
+```{r DEr3}
+DEr3 <- r3[!is.na(r3$padj),]
+DEr3 <- DEr3[DEr3$padj < 0.05,]
+DEr3 <- DEr3[abs(DEr3$log2FoldChange) > 1,]
+head(DEr3)
+```
+
+Save the `DEr3` object in a `results_r3` file
+
+```{r save DEr3}
+write.table(x = DEr3, file = "results_r3.txt", sep = "\t", col.names = NA)
+```
+
+
+#### Results for r4
+
+Select the **differentially expressed genes** from `r4`
+
+```{r DEr4}
+DEr4 <- r4[!is.na(r4$padj),]
+DEr4 <- DEr4[DEr4$padj < 0.05,]
+DEr4 <- DEr4[abs(DEr4$log2FoldChange) > 1,]
+head(DEr4)
+```
+
+Save the `DEr4` object in a `results_r4` file
+
+```{r save DEr4}
+write.table(x = DEr4, file = "results_r4.txt", sep = "\t", col.names = NA)
+```
+
+
+### Questions
+
+
+1. How many genes are differentially expressed at the thresholds of `padj < 0.05`? And `padj < 0.1`?
+
+The number of differentially expressed genes at the threshold of `padj < 0.05` is 2172;
+
+```{r question 1.05, class.source = 'fold-hide'}
+count.05 <- res[!is.na(res$padj),]
+count.05 <- count.05[count.05$padj < 0.05,]
+count.05 <- count.05[abs(count.05$log2FoldChange) > 1,]
+nrow(count.05)
+```
+
+The number of differentially expressed genes at the threshold of `padj < 0.1` is 2209.
+
+```{r question 1.1, class.source = 'fold-hide'}
+count.1 <- res[!is.na(res$padj),]
+count.1 <- count.1[count.1$padj < 0.1,]
+count.1 <- count.1[abs(count.1$log2FoldChange) > 1,]
+nrow(count.1)
+```
+
+2. How many genes at the threshold of `padj < 0.05` are upregulated ( > 1)?
+
+The **upregulated** genes at the threshold of `padj < 0.05` is 1037.
+
+```{r question 2, class.source = 'fold-hide'}
+upregulated_count.05 <- res[!is.na(res$padj),]
+upregulated_count.05 <- upregulated_count.05[upregulated_count.05$padj < 0.05,]
+upregulated_count.05 <- upregulated_count.05[upregulated_count.05$log2FoldChange > 1,]
+nrow(upregulated_count.05)
+```
+
+3. Choice one of the GO enrichment results and report how many categories are significant (`p.adjust < 0.05`). *Hint: first convert the object with GO results with `as.data.frame` function.*
+
+If we choose the *GO enrichment results* of the 2^nd^ comparison and we use the `as.data.frame` function, we select `p.adjust < 0.05` and we use the `nrow` function, we get that the number of *significant categories* for this analysis is 105.
+
+```{r question 3, class.source = 'fold-hide'}
+GO_BP_2_df <- as.data.frame(GO_BP_2)
+sig_cat <- GO_BP_2_df[GO_BP_2_df$p.adjust < 0.05,]
+nrow(sig_cat)
+```
+
+4. How many genes are present in the most enriched category of the GO enrichment result?
+
+The number of genes in the most enriched category is 107.
+
+```{r question 4, class.source = 'fold-hide'}
+GO_BP_2_df$Count[1]
+```
+
+5. The numbers of significant differentially expressed genes of **Step 7** are the same as the results in **Step 5**?
+
+The numbers of significant differentially expressed genes of **Step 5** were **2172** for `padj < 0.05` and **2209** for `padj < 0.1`.
+In **Step 7** we get **2268** for `padj < 0.05` and **2331** for `padj < 0.1`.  
+*These results are pretty similar but there is a difference of about 100 genes.*
+
+```{r question 5.05, class.source = 'fold-hide'}
+new_count.05 <- new_res[!is.na(new_res$padj),]
+new_count.05 <- new_count.05[new_count.05$padj < 0.05,]
+new_count.05 <- new_count.05[abs(new_count.05$log2FoldChange) > 1,]
+nrow(new_count.05)
+```
+
+```{r question 5.1, class.source = 'fold-hide'}
+new_count.1 <- new_res[!is.na(new_res$padj),]
+new_count.1 <- new_count.1[new_count.1$padj < 0.1,]
+new_count.1 <- new_count.1[abs(new_count.1$log2FoldChange) > 1,]
+nrow(new_count.1)
+```
+  
+----------------------------------------------------------------------------------
+
+##### About R Markdown document
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.

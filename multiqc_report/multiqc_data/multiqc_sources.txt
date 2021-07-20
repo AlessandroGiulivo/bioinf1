@@ -1,0 +1,13 @@
+Module	Section	Sample Name	Source
+FastQC	all_sections	SRR5486478	/home/alessandro/share/RNAseq Analysis/data/fastqc_reports/SRR5486478_fastqc.zip
+FastQC	all_sections	SRR5486479	/home/alessandro/share/RNAseq Analysis/data/fastqc_reports/SRR5486479_fastqc.zip
+FastQC	all_sections	SRR5486480	/home/alessandro/share/RNAseq Analysis/data/fastqc_reports/SRR5486480_fastqc.zip
+FastQC	all_sections	SRR5486481	/home/alessandro/share/RNAseq Analysis/data/fastqc_reports/SRR5486481_fastqc.zip
+FastQC	all_sections	SRR5486482	/home/alessandro/share/RNAseq Analysis/data/fastqc_reports/SRR5486482_fastqc.zip
+FastQC	all_sections	SRR5486483	/home/alessandro/share/RNAseq Analysis/data/fastqc_reports/SRR5486483_fastqc.zip
+FastQC	all_sections	SRR5486484	/home/alessandro/share/RNAseq Analysis/data/fastqc_reports/SRR5486484_fastqc.zip
+FastQC	all_sections	SRR5486485	/home/alessandro/share/RNAseq Analysis/data/fastqc_reports/SRR5486485_fastqc.zip
+FastQC	all_sections	SRR5486486	/home/alessandro/share/RNAseq Analysis/data/fastqc_reports/SRR5486486_fastqc.zip
+FastQC	all_sections	SRR5486487	/home/alessandro/share/RNAseq Analysis/data/fastqc_reports/SRR5486487_fastqc.zip
+FastQC	all_sections	SRR5486488	/home/alessandro/share/RNAseq Analysis/data/fastqc_reports/SRR5486488_fastqc.zip
+FastQC	all_sections	SRR5486489	/home/alessandro/share/RNAseq Analysis/data/fastqc_reports/SRR5486489_fastqc.zip
